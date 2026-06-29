@@ -1,0 +1,285 @@
+# Build Triton-distributed
+
+## The best practice to use Triton-distributed with the Nvidia backend:
+- Python >=3.11 (suggest using virtual environment)
+- CUDA >=12.4
+- Torch >=2.8
+
+We recommend installation in [Nvidia PyTorch container](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/pytorch/tags).
+
+#### if for AMD GPU:
+- ROCM 7.1
+- Torch 2.7.1 with ROCM support
+
+
+
+Dependencies with other versions may also work well, but this is not guaranteed. If you find any problem in installing, please tell us in Issues.
+
+### NVIDIA Build Steps
+1. Prepare docker container:
+    ```sh
+    docker run --name triton-dist --ipc=host --network=host --privileged --cap-add=SYS_ADMIN --shm-size=10g --gpus=all -itd nvcr.io/nvidia/pytorch:25.04-py3 /bin/bash
+    docker exec -it triton-dist /bin/bash
+    ```
+
+2. Clone Triton-distributed to your own path (e.g., `/workspace/Triton-distributed`)
+    ```sh
+    git clone https://github.com/ByteDance-Seed/Triton-distributed.git
+    ```
+
+3. Update submodules
+    ```sh
+    cd /workspace/Triton-distributed
+    git submodule deinit --all -f # deinit previous submodules
+    rm -rf 3rdparty/triton # remove previous triton
+    git submodule update --init --recursive
+    ```
+
+4. Install dependencies (optional for PyTorch container)
+    > Note: Not needed for PyTorch container
+    ```sh
+    # If you are not using PyTorch container
+    pip3 install torch==2.8
+    pip3 install setuptools==69.0.0 wheel pybind11
+    ```
+
+5. Build Triton-distributed
+
+    Then you can build Triton-distributed.
+
+    ```sh
+    # Remove triton installed with torch
+    pip uninstall triton
+    pip uninstall triton_dist # remove previous triton-dist
+    # Install dependencies
+    pip3 install cuda.core==0.2.0 cuda-python==12.4 nvidia-nvshmem-cu12==3.3.9 Cython==0.29.24 nvshmem4py-cu12==0.1.2
+    rm -rf /usr/local/lib/python3.12/dist-packages/triton
+    # Install Triton-distributed
+    cd /workspace/Triton-distributed
+    export USE_TRITON_DISTRIBUTED_AOT=0
+    echo 'numpy<2' > /tmp/pip_install_constraint.txt
+    MAX_JOBS=126 pip3 install -c /tmp/pip_install_constraint.txt -e python[build,tests,tutorials] --verbose --no-build-isolation --use-pep517
+    ```
+
+    We also provide AOT version of Triton-distributed. If you want to use AOT (**Not Recommended**), then
+    ```sh
+    cd /workspace/Triton-distributed/
+    bash ./scripts/gen_aot_code.sh
+    export USE_TRITON_DISTRIBUTED_AOT=1
+    MAX_JOBS=126 pip3 install -e python --verbose --no-build-isolation --use-pep517
+    ```
+    (Note: You have to first build non-AOT version before building AOT version, once you build AOT version, you will always build for AOT in future. To unset this, you have to remove your build directory: `python/build`)
+
+
+### Test NVIDIA Installation
+
+#### Quick Validation Tests
+```sh
+# Basic distributed wait test
+bash ./scripts/launch.sh python/triton_dist/test/nvidia/test_distributed_wait.py --case correctness_tma
+
+# NVSHMEM API test
+bash ./scripts/launch.sh python/triton_dist/test/nvidia/test_nvshmem_api.py
+```
+
+#### AllGather GEMM Tests
+```sh
+bash ./scripts/launch.sh python/triton_dist/test/nvidia/test_ag_gemm.py --case check
+bash ./scripts/launch.sh --nproc_per_node 2 python/triton_dist/test/nvidia/test_ag_gemm.py --case check
+```
+
+#### GEMM ReduceScatter Tests
+```sh
+bash ./scripts/launch.sh python/triton_dist/test/nvidia/test_gemm_rs.py -M 8192 -N 8192 -K 29568 --check
+```
+
+#### AllReduce Tests
+```sh
+NVSHMEM_DISABLE_CUDA_VMM=1 bash ./scripts/launch.sh python/triton_dist/test/nvidia/test_allreduce.py --method one_shot --stress --iters 2
+```
+
+#### Flash Decoding Tests
+```sh
+bash ./scripts/launch.sh python/triton_dist/test/nvidia/test_decode_attn.py --case perf_8k
+bash ./scripts/launch.sh python/triton_dist/test/nvidia/test_sp_decode_attn.py --case correctness
+```
+
+#### MoE Tests
+```sh
+bash ./scripts/launch.sh python/triton_dist/test/nvidia/test_ag_moe.py --M 2048 --iters 10 --warmup_iters 20
+bash ./scripts/launch.sh python/triton_dist/test/nvidia/test_moe_reduce_rs.py 8192 2048 1536 32 2
+```
+
+#### E2E Tests
+```sh
+# Dense model
+bash ./scripts/launch.sh python/triton_dist/test/nvidia/test_tp_e2e.py --bsz 8 --seq_len 256 --model <model_path> --check --mode ag_rs
+
+# E2E inference
+bash ./scripts/launch.sh python/triton_dist/test/nvidia/test_e2e_inference.py --bsz 4096 --gen_len 128 --max_length 150 --model <model_path> --backend triton_dist
+```
+
+### Run All Unit Tests
+The full test suite is available via:
+```sh
+bash .codebase/scripts/nvidia/run_unittest.sh
+```
+
+### Run E2E Tests
+```sh
+bash .codebase/scripts/nvidia/run_e2e_test.sh
+```
+
+### Run Tutorial Tests
+```sh
+bash .codebase/scripts/nvidia/run_tutorial_test.sh
+```
+
+### Run All The Tutorials
+See examples in the `tutorials` directory at the project root.
+
+## To use Triton-distributed with the AMD backend:
+Starting from the rocm/pytorch:rocm7.1_ubuntu24.04_py3.12_pytorch_release_2.7.1 Docker container
+#### AMD Build Steps
+0. Detect your GPU architecture and export it. 
+```sh
+# e.g. gfx950 for MI350, gfx942 for MI300
+python3 -c "import torch; print(torch.cuda.get_device_properties(0).gcnArchName.split(':')[0])"
+export BITCODE_LIB_ARCH=gfx950   # ← replace with the value printed above
+```
+If this environment variable is not set, the default value is "gfx942"
+
+1. Clone the repo
+```sh
+git clone https://github.com/ByteDance-Seed/Triton-distributed.git
+```
+2. Update submodules
+```sh
+cd Triton-distributed/
+git submodule update --init --recursive
+```
+If you are updating an old repo, there may be issues if the rocshmem submodule is still present. Erase it if necessary:
+```sh
+rm -rf 3rdparty/rocshmem # only for updated repo
+```
+3. Install dependencies
+```sh
+export TRITON_BUILD_WITH_CLANG_LLD=TRUE
+export TRITON_USE_ASSERT_ENABLED_LLVM=TRUE
+export TRITON_BUILD_PROTON=0
+rm -f /usr/local/bin/cmake
+apt-get update -y
+apt install -y libopenmpi-dev git cython3 ibverbs-utils openmpi-bin libopenmpi-dev libpci-dev libdw1 locales cmake miopen-hip autoconf libtool flex ninja-build clang lld
+python3 -m pip install -i https://test.pypi.org/simple 'hip-python>=7.1' # (or whatever Rocm version you have)
+pip3 install pybind11
+bash ./shmem/rocshmem_bind/build.sh
+```
+4. Build Triton-distributed
+```sh
+# Uninstall the original Triton
+pip3 uninstall -y triton
+
+pip3 install -e python --verbose --no-build-isolation --use-pep517
+```
+### Test AMD Installation
+#### GEMM ReduceScatter example on single node
+```sh
+bash ./scripts/launch_amd.sh ./python/triton_dist/test/amd/test_ag_gemm_intra_node.py 8192 8192 29568
+```
+and see the following (reduced) output
+```sh
+✅ Triton and Torch match
+```
+
+## To use Triton-distributed with the Ascend backend:
+#### Ascend Build from source
+1. Clone the repo
+```sh
+git clone https://github.com/ByteDance-Seed/Triton-distributed.git
+```
+2. Update submodules
+```sh
+cd Triton-distributed/
+git submodule update --init --depth=1
+cd 3rdparty/triton-ascend
+git submodule update --init --depth=1
+```
+3. Install dependencies
+
+triton-ascend depends on specified LLVM version
+- step 1：Build LLVM with clang and lld：
+
+  ```bash
+  apt-get install -y clang-15 lld-15 ccache
+  ```
+
+- step 2：set LLVM_INSTALL_PREFIX：
+
+   ```bash
+   export LLVM_INSTALL_PREFIX=/path/to/llvm-install
+   ```
+
+- step 3：Build and Install LLVM：
+
+  ```bash
+  git clone --no-checkout https://github.com/llvm/llvm-project.git
+  cd llvm-project
+  git checkout fad3272286528b8a491085183434c5ad4b59ab92
+  wget https://raw.gitcode.com/Ascend/triton-ascend/blobs/2b0a06eb21438359d6d0576b622e3bb5e0292d17/fad3272.patch
+  git apply fad3272.patch
+  mkdir build
+  cd build
+  cmake ../llvm \
+    -G Ninja \
+    -DCMAKE_C_COMPILER=/usr/bin/clang-15 \
+    -DCMAKE_CXX_COMPILER=/usr/bin/clang++-15 \
+    -DCMAKE_LINKER=/usr/bin/lld-15 \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DLLVM_ENABLE_ASSERTIONS=ON \
+    -DLLVM_ENABLE_PROJECTS="mlir;llvm;lld" \
+    -DLLVM_TARGETS_TO_BUILD="host;NVPTX;AMDGPU" \
+    -DLLVM_ENABLE_LLD=ON \
+    -DCMAKE_INSTALL_PREFIX=${LLVM_INSTALL_PREFIX}
+  ninja install
+  ```
+
+- step 4：copy FileCheck and llvm-lit to Install directory：
+
+   ```bash
+   cp  {PATH_TO}/llvm_project/build/bin/FileCheck ${LLVM_INSTALL_PREFIX}/bin/FileCheck
+   cp  {PATH_TO}/llvm_project/build/bin/llvm-lit ${LLVM_INSTALL_PREFIX}/bin/llvm-lit
+   ```
+
+- step 5：build AscendNPU-IR：
+  ```bash
+  source /usr/local/Ascend/ascend-toolkit/set_env.sh
+  git clone https://gitcode.com/Ascend/AscendNPU-IR.git
+  cd AscendNPU-IR
+  git submodule update --init --depth=1
+  mkdir build
+  ./build-tools/build.sh -o ./build -t --build-type Release --apply-patches --bisheng-compile=$ASCEND_HOME_PATH/bin --build-shmem-template
+  ```
+4. Build Triton-distributed
+```sh
+cd {PATH_TO}/Triton-distributed/python
+LLVM_SYSPATH=${LLVM_INSTALL_PREFIX} TRITON_BUILD_WITH_CLANG_LLD=ON TRITON_BUILD_PROTON=OFF TRITON_BUILD_LITTLE_KERNEL=OFF TRITON_USE_ASCEND=ON TRITON_APPEND_CMAKE_ARGS="-DTRITON_BUILD_UT=OFF" python setup.py install
+```
+
+5. Build and Install shmem
+```sh
+cd 3rdparty/shmem
+bash scripts/build.sh -python_extension
+pip install dist/shmem-xxx.whl
+```
+### Test Ascend Installation
+#### Allgather GEMM example on single node
+```sh
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+export PATH=$HOME/AscendNPU-IR/build/bin:$PATH
+torchrun --nproc-per-node=2 tutorials/ascend/01-ascend-allgather-gemm.py
+```
+and see the following (reduced) output
+```sh
+[PASS] Rank0: C_golden and C match within tolerances (rtol=1e-3, atol=1e-3).
+[PASS] Rank1: C_golden and C match within tolerances (rtol=1e-3, atol=1e-3).
+```
