@@ -1,0 +1,18 @@
+{
+    "cmake.sourceDirectory": "/workspace/mega-infra/Triton-distributed",
+    "python.analysis.autoSearchPaths": false,
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}/src",
+        "${workspaceFolder}/mirage/python",
+        "${workspaceFolder}/Triton-distributed/python",
+        "${workspaceFolder}/Megakernels",
+        "${workspaceFolder}/deepseekv4"
+    ],
+    "python.autoComplete.extraPaths": [
+        "${workspaceFolder}/src",
+        "${workspaceFolder}/mirage/python",
+        "${workspaceFolder}/Triton-distributed/python",
+        "${workspaceFolder}/Megakernels",
+        "${workspaceFolder}/deepseekv4"
+    ]
+}
